@@ -6,8 +6,9 @@ import { Search, Calendar, Filter, ChevronLeft, ChevronRight } from "lucide-reac
 import { receiptsApi } from "@/lib/api-client";
 import { formatCurrency, formatDateShort } from "@/lib/utils";
 import type { Receipt, GetReceiptsParams } from "@/types/receipt";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 
-export default function ReceiptsPage() {
+function ReceiptsPageContent() {
   const router = useRouter();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -196,4 +197,10 @@ export default function ReceiptsPage() {
   );
 }
 
-
+export default function ReceiptsPage() {
+  return (
+    <ProtectedRoute>
+      <ReceiptsPageContent />
+    </ProtectedRoute>
+  );
+}
