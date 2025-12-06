@@ -2,7 +2,18 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Receipt, Upload, List, LogOut, User as UserIcon, LayoutDashboard } from "lucide-react";
+import {
+  Receipt,
+  Upload,
+  List,
+  LogOut,
+  User as UserIcon,
+  LayoutDashboard,
+  Crown,
+  BarChart3,
+  FileText,
+  CreditCard,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { authStorage } from "@/lib/auth-storage";
 import { useState, useEffect } from "react";
@@ -22,6 +33,16 @@ const navItems = [
     label: "Fişlerim",
     href: "/receipts",
     icon: List,
+  },
+  {
+    label: "Analitik",
+    href: "/analytics",
+    icon: BarChart3,
+  },
+  {
+    label: "Abonelik",
+    href: "/subscriptions/current",
+    icon: Crown,
   },
 ];
 
@@ -128,6 +149,26 @@ export function Navigation() {
                         </p>
                         <p className="text-sm text-gray-500 truncate">{user?.email}</p>
                       </div>
+                      
+                      <Link
+                        href="/payments"
+                        onClick={() => setIsUserMenuOpen(false)}
+                        className="w-full flex items-center space-x-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <CreditCard className="h-4 w-4" />
+                        <span>Ödemeler</span>
+                      </Link>
+                      
+                      <Link
+                        href="/reports"
+                        onClick={() => setIsUserMenuOpen(false)}
+                        className="w-full flex items-center space-x-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        <FileText className="h-4 w-4" />
+                        <span>Raporlar</span>
+                      </Link>
+                      
+                      <div className="border-t border-gray-200 my-1"></div>
                       
                       <button
                         onClick={handleLogout}

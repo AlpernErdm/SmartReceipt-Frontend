@@ -30,4 +30,24 @@ export function formatDateShort(date: string | Date): string {
   }).format(new Date(date));
 }
 
+export function getCurrencySymbol(currency: number): string {
+  switch (currency) {
+    case 0: // TRY
+      return "₺";
+    case 1: // USD
+      return "$";
+    case 2: // EUR
+      return "€";
+    case 3: // GBP
+      return "£";
+    default:
+      return "₺";
+  }
+}
+
+export function formatCurrencyWithSymbol(amount: number, currency: number = 0): string {
+  const symbol = getCurrencySymbol(currency);
+  return `${symbol}${amount.toFixed(2)}`;
+}
+
 

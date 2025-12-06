@@ -2,12 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Receipt, TrendingUp, ShoppingBag, DollarSign } from "lucide-react";
+import { Receipt, TrendingUp, ShoppingBag, DollarSign, Crown, AlertTriangle, Scan, HardDrive, ArrowRight } from "lucide-react";
 import { receiptsApi } from "@/lib/api-client";
+import { subscriptionsApi } from "@/lib/subscription-api";
 import { formatCurrency, formatDateShort } from "@/lib/utils";
 import { authStorage } from "@/lib/auth-storage";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import type { Receipt as ReceiptType } from "@/types/receipt";
+import type { SubscriptionDto, UsageDto } from "@/types/subscription";
+import { SubscriptionStatus } from "@/types/subscription";
 
 interface DashboardStats {
   totalReceipts: number;
@@ -26,6 +29,8 @@ function DashboardPageContent() {
     totalItems: 0,
     recentReceipts: [],
   });
+  const [subscription, setSubscription] = useState<SubscriptionDto | null>(null);
+  const [usage, setUsage] = useState<UsageDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
 
@@ -38,26 +43,63 @@ function DashboardPageContent() {
   async function loadDashboard() {
     try {
       setLoading(true);
-      const receipts = await receiptsApi.getAll({ pageSize: 100 });
       
-      const totalReceipts = receipts.length;
-      const totalAmount = receipts.reduce((sum, r) => sum + r.totalAmount, 0);
-      const averageAmount = totalReceipts > 0 ? totalAmount / totalReceipts : 0;
-      const totalItems = receipts.reduce((sum, r) => sum + r.items.length, 0);
-      const recentReceipts = receipts.slice(0, 5);
+      // Load receipts, subscription, and usage in parallel
+      const [receiptsData, subscriptionData, usageData] = await Promise.allSettled([
+        receiptsApi.getAll({ pageSize: 100 }),
+        subscriptionsApi.getCurrent().catch(() => null), // 404 is OK, means no subscription
+        subscriptionsApi.getUsage().catch(() => null), // Usage might fail if no subscription
+      ]);
 
-      setStats({
-        totalReceipts,
-        totalAmount,
-        averageAmount,
-        totalItems,
-        recentReceipts,
-      });
+      // Process receipts
+      if (receiptsData.status === "fulfilled") {
+        const receipts = receiptsData.value;
+        const totalReceipts = receipts.length;
+        const totalAmount = receipts.reduce((sum, r) => sum + r.totalAmount, 0);
+        const averageAmount = totalReceipts > 0 ? totalAmount / totalReceipts : 0;
+        const totalItems = receipts.reduce((sum, r) => sum + r.items.length, 0);
+        const recentReceipts = receipts.slice(0, 5);
+
+        setStats({
+          totalReceipts,
+          totalAmount,
+          averageAmount,
+          totalItems,
+          recentReceipts,
+        });
+      }
+
+      // Process subscription
+      if (subscriptionData.status === "fulfilled" && subscriptionData.value) {
+        setSubscription(subscriptionData.value);
+      }
+
+      // Process usage
+      if (usageData.status === "fulfilled" && usageData.value) {
+        setUsage(usageData.value);
+      }
     } catch (error) {
       console.error("Dashboard yüklenemedi:", error);
     } finally {
       setLoading(false);
     }
+  }
+
+  function formatStorage(bytes: number): string {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    return `${(bytes / 1024).toFixed(2)} KB`;
+  }
+
+  function getUsageColor(percentage: number): string {
+    if (percentage >= 100) return "bg-red-500";
+    if (percentage >= 80) return "bg-yellow-500";
+    if (percentage >= 50) return "bg-blue-500";
+    return "bg-green-500";
   }
 
   if (loading) {
@@ -77,13 +119,137 @@ function DashboardPageContent() {
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Welcome Section */}
       <div className="bg-white rounded-lg shadow-sm p-8 border border-gray-200">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Hoş Geldiniz! 👋
-        </h1>
-        <p className="text-gray-600">
-          Fişlerinizi AI ile otomatik okuyun, harcamalarınızı kolayca takip edin
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              Hoş Geldiniz! 👋
+            </h1>
+            <p className="text-gray-600">
+              Fişlerinizi AI ile otomatik okuyun, harcamalarınızı kolayca takip edin
+            </p>
+          </div>
+          <button
+            onClick={() => router.push("/analytics")}
+            className="flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+          >
+            <TrendingUp className="h-5 w-5 mr-2" />
+            Analitik Dashboard
+          </button>
+        </div>
       </div>
+
+      {/* Subscription & Usage Info */}
+      {(subscription || usage) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Plan Info */}
+          {subscription && (
+            <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center">
+                  <Crown className="h-6 w-6 text-yellow-600 mr-2" />
+                  <h3 className="text-lg font-semibold text-gray-900">Mevcut Plan</h3>
+                </div>
+                {subscription.status === SubscriptionStatus.Active && (
+                  <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-green-700 bg-green-100 rounded-full">
+                    Aktif
+                  </span>
+                )}
+                {subscription.status === SubscriptionStatus.Trial && (
+                  <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded-full">
+                    Deneme
+                  </span>
+                )}
+              </div>
+              <p className="text-2xl font-bold text-gray-900 mb-1">{subscription.plan.name}</p>
+              <p className="text-sm text-gray-600 mb-4">{subscription.plan.description}</p>
+              <button
+                onClick={() => router.push("/subscriptions/current")}
+                className="flex items-center text-blue-600 hover:text-blue-700 font-medium text-sm"
+              >
+                Abonelik Detayları
+                <ArrowRight className="h-4 w-4 ml-1" />
+              </button>
+            </div>
+          )}
+
+          {/* Usage Stats */}
+          {usage && (
+            <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">Kullanım İstatistikleri</h3>
+                {usage.isLimitExceeded && (
+                  <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-700 bg-red-100 rounded-full">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    Limit Aşıldı
+                  </span>
+                )}
+              </div>
+              
+              <div className="space-y-4">
+                {/* Scan Usage */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center">
+                      <Scan className="h-4 w-4 text-gray-600 mr-2" />
+                      <span className="text-sm text-gray-600">Aylık Tarama</span>
+                    </div>
+                    <span className="text-sm font-medium text-gray-900">
+                      {usage.scanCount} / {usage.scanLimit === -1 ? "Sınırsız" : usage.scanLimit}
+                    </span>
+                  </div>
+                  {usage.scanLimit !== -1 && (
+                    <>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full ${getUsageColor(usage.usagePercentage)}`}
+                          style={{ width: `${Math.min(usage.usagePercentage, 100)}%` }}
+                        />
+                      </div>
+                      {usage.usagePercentage >= 80 && (
+                        <p className="text-xs text-gray-600 mt-1">
+                          {usage.usagePercentage >= 100
+                            ? "Limit aşıldı. Plan yükseltmeyi düşünün."
+                            : "Limit yaklaşıyor. Plan yükseltmeyi düşünün."}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Storage Usage */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center">
+                      <HardDrive className="h-4 w-4 text-gray-600 mr-2" />
+                      <span className="text-sm text-gray-600">Depolama</span>
+                    </div>
+                    <span className="text-sm font-medium text-gray-900">
+                      {formatStorage(usage.storageUsedBytes)} / {formatStorage(usage.storageLimitBytes)}
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="h-2 rounded-full bg-blue-500"
+                      style={{
+                        width: `${Math.min((usage.storageUsedBytes / usage.storageLimitBytes) * 100, 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {(usage.usagePercentage >= 80 || usage.isLimitExceeded) && (
+                <button
+                  onClick={() => router.push("/subscriptions")}
+                  className="mt-4 w-full px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors text-sm"
+                >
+                  Plan Yükselt
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

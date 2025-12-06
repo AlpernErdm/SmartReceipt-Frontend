@@ -106,7 +106,12 @@ apiClient.interceptors.response.use(
 
     if (error.response) {
       console.error('API Error:', error.response.data);
-      throw new Error(error.response.data.message || 'Bir hata oluştu');
+      
+      // Preserve the original error for better error handling
+      const apiError: any = new Error(error.response.data.message || 'Bir hata oluştu');
+      apiError.response = error.response;
+      apiError.status = error.response.status;
+      throw apiError;
     } else if (error.request) {
       console.error('Network Error:', error.request);
       throw new Error('Sunucuya bağlanılamadı');

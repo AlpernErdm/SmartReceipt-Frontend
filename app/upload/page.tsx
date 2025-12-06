@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, CheckCircle, AlertCircle, Loader2, X } from "lucide-react";
+import { Upload, CheckCircle, AlertCircle, Loader2, X, AlertTriangle, ArrowRight } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 import { receiptsApi } from "@/lib/api-client";
+import { subscriptionsApi } from "@/lib/subscription-api";
 import { formatCurrency } from "@/lib/utils";
 import type { Receipt } from "@/types/receipt";
+import type { UsageDto } from "@/types/subscription";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 function UploadPageContent() {
@@ -15,6 +17,24 @@ function UploadPageContent() {
   const [result, setResult] = useState<Receipt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageDto | null>(null);
+  const [loadingUsage, setLoadingUsage] = useState(true);
+
+  useEffect(() => {
+    loadUsage();
+  }, []);
+
+  async function loadUsage() {
+    try {
+      setLoadingUsage(true);
+      const data = await subscriptionsApi.getUsage().catch(() => null);
+      setUsage(data);
+    } catch (err) {
+      console.error("Kullanım bilgisi yüklenemedi:", err);
+    } finally {
+      setLoadingUsage(false);
+    }
+  }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
@@ -23,6 +43,12 @@ function UploadPageContent() {
     maxFiles: 1,
     onDrop: async (acceptedFiles) => {
       if (acceptedFiles.length === 0) return;
+
+      // Check limit before upload
+      if (usage && usage.scanLimit !== -1 && usage.scanCount >= usage.scanLimit) {
+        setError("Aylık tarama limitinize ulaştınız. Lütfen planınızı yükseltin.");
+        return;
+      }
 
       const file = acceptedFiles[0];
       
@@ -42,9 +68,18 @@ function UploadPageContent() {
 
       const receipt = await receiptsApi.scanReceipt(file);
       setResult(receipt);
+      
+      // Reload usage after successful upload
+      await loadUsage();
     } catch (err: any) {
-      setError(err.message || "Fiş yüklenirken bir hata oluştu");
+      const errorMessage = err.message || "Fiş yüklenirken bir hata oluştu";
+      setError(errorMessage);
       setPreview(null);
+      
+      // Check if it's a limit error
+      if (errorMessage.includes("limitinize ulaştınız") || errorMessage.includes("limit")) {
+        await loadUsage(); // Reload usage to show current status
+      }
     } finally {
       setUploading(false);
     }
@@ -65,19 +100,90 @@ function UploadPageContent() {
         </p>
       </div>
 
+      {/* Usage Warning */}
+      {usage && usage.scanLimit !== -1 && (
+        <div
+          className={`rounded-lg p-4 border-l-4 ${
+            usage.isLimitExceeded || usage.scanCount >= usage.scanLimit
+              ? "bg-red-50 border-red-500"
+              : usage.usagePercentage >= 80
+              ? "bg-yellow-50 border-yellow-500"
+              : "bg-blue-50 border-blue-500"
+          }`}
+        >
+          <div className="flex items-start">
+            <AlertTriangle
+              className={`h-5 w-5 mr-3 mt-0.5 ${
+                usage.isLimitExceeded || usage.scanCount >= usage.scanLimit
+                  ? "text-red-500"
+                  : usage.usagePercentage >= 80
+                  ? "text-yellow-500"
+                  : "text-blue-500"
+              }`}
+            />
+            <div className="flex-1">
+              <p
+                className={`text-sm font-medium ${
+                  usage.isLimitExceeded || usage.scanCount >= usage.scanLimit
+                    ? "text-red-900"
+                    : usage.usagePercentage >= 80
+                    ? "text-yellow-900"
+                    : "text-blue-900"
+                }`}
+              >
+                {usage.isLimitExceeded || usage.scanCount >= usage.scanLimit
+                  ? "Aylık tarama limitinize ulaştınız"
+                  : usage.usagePercentage >= 80
+                  ? "Aylık tarama limitinize yaklaşıyorsunuz"
+                  : "Kullanım Durumu"}
+              </p>
+              <p
+                className={`text-sm mt-1 ${
+                  usage.isLimitExceeded || usage.scanCount >= usage.scanLimit
+                    ? "text-red-700"
+                    : usage.usagePercentage >= 80
+                    ? "text-yellow-700"
+                    : "text-blue-700"
+                }`}
+              >
+                {usage.scanCount} / {usage.scanLimit} tarama kullanıldı
+                {usage.isLimitExceeded || usage.scanCount >= usage.scanLimit ? (
+                  <span className="block mt-2">
+                    Daha fazla tarama yapmak için planınızı yükseltin.
+                  </span>
+                ) : null}
+              </p>
+              {(usage.isLimitExceeded || usage.scanCount >= usage.scanLimit || usage.usagePercentage >= 80) && (
+                <button
+                  onClick={() => router.push("/subscriptions")}
+                  className="mt-3 inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Plan Yükselt
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {!result && !uploading && (
         <div
           {...getRootProps()}
-          className={`bg-white rounded-lg shadow-sm border-2 border-dashed p-12 text-center cursor-pointer transition-all ${
-            isDragActive
-              ? "border-primary bg-primary/5"
-              : "border-gray-300 hover:border-primary/50 hover:bg-gray-50"
+          className={`bg-white rounded-lg shadow-sm border-2 border-dashed p-12 text-center transition-all ${
+            usage && usage.scanLimit !== -1 && usage.scanCount >= usage.scanLimit
+              ? "border-gray-300 bg-gray-50 cursor-not-allowed opacity-50"
+              : isDragActive
+              ? "border-primary bg-primary/5 cursor-pointer"
+              : "border-gray-300 hover:border-primary/50 hover:bg-gray-50 cursor-pointer"
           }`}
         >
-          <input {...getInputProps()} />
+          <input {...getInputProps()} disabled={usage && usage.scanLimit !== -1 && usage.scanCount >= usage.scanLimit} />
           <Upload className="h-16 w-16 text-gray-400 mx-auto mb-4" />
           <p className="text-lg font-medium text-gray-900 mb-2">
-            {isDragActive
+            {usage && usage.scanLimit !== -1 && usage.scanCount >= usage.scanLimit
+              ? "Aylık tarama limitinize ulaştınız"
+              : isDragActive
               ? "Dosyayı buraya bırakın"
               : "Dosya yüklemek için tıklayın veya sürükleyin"}
           </p>
