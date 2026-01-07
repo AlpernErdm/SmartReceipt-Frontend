@@ -34,8 +34,15 @@ function CurrentSubscriptionPageContent() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (searchParams.get("success") === "true") {
-      setSuccessMessage("Abonelik başarıyla oluşturuldu!");
+    const success = searchParams.get("success");
+    const payment = searchParams.get("payment");
+    
+    if (success === "true") {
+      if (payment === "completed") {
+        setSuccessMessage("Ödeme başarıyla tamamlandı ve aboneliğiniz aktif edildi!");
+      } else {
+        setSuccessMessage("Abonelik başarıyla oluşturuldu!");
+      }
     }
     loadData();
   }, [searchParams]);

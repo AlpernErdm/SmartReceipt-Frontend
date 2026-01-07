@@ -44,6 +44,9 @@ export interface CreatePaymentRequest {
   paymentMethod?: string;
   description?: string;
   metadata?: Record<string, any>;
+  cardToken?: string;
+  cardUserKey?: string;
+  callbackUrl?: string;
 }
 
 // Payment History DTO
@@ -55,6 +58,7 @@ export interface PaymentHistoryDto {
   provider: PaymentProvider;
   createdAt: string;
   paidAt?: string;
+  errorMessage?: string;
 }
 
 // Refund Request

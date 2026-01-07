@@ -10,6 +10,8 @@ import {
   Calendar,
   XCircle,
   ArrowLeft,
+  RefreshCw,
+  DollarSign,
 } from "lucide-react";
 import { paymentApi } from "@/lib/payment-api";
 import { subscriptionsApi } from "@/lib/subscription-api";
@@ -24,6 +26,10 @@ function PaymentsPageContent() {
   const [payments, setPayments] = useState<PaymentHistoryDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refunding, setRefunding] = useState<string | null>(null);
+  const [showRefundModal, setShowRefundModal] = useState<string | null>(null);
+  const [refundAmount, setRefundAmount] = useState<string>("");
+  const [refundReason, setRefundReason] = useState<string>("");
 
   useEffect(() => {
     loadPayments();
@@ -115,6 +121,38 @@ function PaymentsPageContent() {
     }
   }
 
+  async function handleRefund(paymentId: string) {
+    try {
+      setRefunding(paymentId);
+      setError(null);
+
+      const amount = parseFloat(refundAmount);
+      if (isNaN(amount) || amount <= 0) {
+        setError("Geçerli bir tutar giriniz");
+        return;
+      }
+
+      const result = await paymentApi.createRefund(paymentId, {
+        amount: amount,
+        reason: refundReason || undefined,
+      });
+
+      if (result.isSuccess) {
+        setShowRefundModal(null);
+        setRefundAmount("");
+        setRefundReason("");
+        await loadPayments(); // Refresh payment list
+        // Show success message (you can add a toast notification here)
+      } else {
+        setError(result.errorMessage || "İade işlemi başarısız oldu");
+      }
+    } catch (err: any) {
+      setError(err.message || "İade işlemi sırasında bir hata oluştu");
+    } finally {
+      setRefunding(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto space-y-6">
@@ -194,6 +232,9 @@ function PaymentsPageContent() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     İşlem Tarihi
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    İşlemler
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -213,10 +254,106 @@ function PaymentsPageContent() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                       {payment.paidAt ? formatDate(payment.paidAt) : "-"}
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {payment.status === PaymentStatus.Completed && (
+                        <button
+                          onClick={() => {
+                            setShowRefundModal(payment.id);
+                            setRefundAmount(payment.amount.toString());
+                          }}
+                          className="text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          İade Et
+                        </button>
+                      )}
+                      {payment.status === PaymentStatus.Failed && payment.errorMessage && (
+                        <div className="text-xs text-red-600 max-w-xs">
+                          {payment.errorMessage}
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Refund Modal */}
+      {showRefundModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900">İade İşlemi</h3>
+              <button
+                onClick={() => {
+                  setShowRefundModal(null);
+                  setRefundAmount("");
+                  setRefundReason("");
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  İade Tutarı
+                </label>
+                <input
+                  type="number"
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value)}
+                  min="0"
+                  step="0.01"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  İade Nedeni (Opsiyonel)
+                </label>
+                <textarea
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="İade nedeninizi belirtiniz..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-4 mt-6">
+              <button
+                onClick={() => {
+                  setShowRefundModal(null);
+                  setRefundAmount("");
+                  setRefundReason("");
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+              >
+                İptal
+              </button>
+              <button
+                onClick={() => handleRefund(showRefundModal)}
+                disabled={refunding === showRefundModal}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {refunding === showRefundModal ? (
+                  <span className="flex items-center justify-center">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    İşleniyor...
+                  </span>
+                ) : (
+                  "İade Et"
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

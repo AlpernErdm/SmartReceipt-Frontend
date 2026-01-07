@@ -8,6 +8,7 @@ import { formatCurrency } from "@/lib/utils";
 import type { SubscriptionPlanDto } from "@/types/subscription";
 import { PlanType, BillingPeriod } from "@/types/subscription";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { PaymentForm } from "@/components/PaymentForm";
 
 function SubscriptionsPageContent() {
   const router = useRouter();
@@ -16,6 +17,12 @@ function SubscriptionsPageContent() {
   const [subscribing, setSubscribing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>(BillingPeriod.Monthly);
+  const [showPaymentForm, setShowPaymentForm] = useState<string | null>(null);
+  const [selectedSubscription, setSelectedSubscription] = useState<{
+    subscriptionId: string;
+    plan: SubscriptionPlanDto;
+    price: number;
+  } | null>(null);
 
   useEffect(() => {
     loadPlans();
@@ -31,6 +38,56 @@ function SubscriptionsPageContent() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Poll payment status until completed or failed
+  async function pollPaymentStatus(paymentId: string, maxAttempts: number = 10) {
+    const { paymentApi } = await import("@/lib/payment-api");
+    const { PaymentStatus } = await import("@/types/payment");
+
+    for (let i = 0; i < maxAttempts; i++) {
+      // Wait 2 seconds before next check
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      try {
+        const status = await paymentApi.getPaymentStatus(paymentId);
+
+        if (status.status === PaymentStatus.Completed) {
+          // Payment completed successfully
+          router.push("/subscriptions/current?success=true&payment=completed");
+          return;
+        }
+
+        if (status.status === PaymentStatus.Failed) {
+          // Payment failed
+          const errorMsg = status.errorMessage || "Ödeme başarısız oldu";
+          setError(errorMsg);
+          return;
+        }
+
+        // Still pending, continue polling
+      } catch (error: any) {
+        console.error("Payment status check error:", error);
+        // Continue polling on error
+      }
+    }
+
+    // Max attempts reached
+    setError("Ödeme durumu kontrol edilemedi. Lütfen daha sonra kontrol edin.");
+  }
+
+  // Get user-friendly error message
+  function getUserFriendlyError(errorMessage: string): string {
+    const errorMessages: Record<string, string> = {
+      "Kart bilgileri geçersiz": "Lütfen kart bilgilerinizi kontrol edin",
+      "Yetersiz bakiye": "Kartınızda yeterli bakiye bulunmuyor",
+      "İşlem reddedildi": "Banka tarafından işlem reddedildi",
+      "Kart limiti aşıldı": "Kart limitiniz aşıldı",
+      "Geçersiz CVV": "CVV kodu geçersiz",
+      "Kart süresi dolmuş": "Kartınızın son kullanma tarihi geçmiş",
+    };
+
+    return errorMessages[errorMessage] || errorMessage;
   }
 
   async function handleSubscribe(planId: string) {
@@ -52,59 +109,102 @@ function SubscriptionsPageContent() {
           billingPeriod,
         });
       } catch (subError: any) {
+        console.error("Subscription creation error:", subError);
+        
         // Check if it's a 500 error from backend
-        if (subError?.response?.status === 500) {
+        if (subError?.response?.status === 500 || subError?.status === 500) {
+          // Try to get detailed error message from backend
+          const backendMessage = subError?.response?.data?.message || 
+                                 subError?.response?.data?.errorMessage ||
+                                 subError?.message;
+          
+          if (backendMessage && backendMessage !== "Bir hata oluştu") {
+            throw new Error(backendMessage);
+          }
+          
           throw new Error(
             "Abonelik oluşturulurken bir sunucu hatası oluştu. Lütfen daha sonra tekrar deneyin veya destek ekibiyle iletişime geçin."
           );
         }
+        
+        // Check for 400 Bad Request
+        if (subError?.response?.status === 400 || subError?.status === 400) {
+          const backendMessage = subError?.response?.data?.message || 
+                                 subError?.response?.data?.errors ||
+                                 subError?.message;
+          
+          if (backendMessage) {
+            // If it's an object with errors, format it
+            if (typeof backendMessage === 'object') {
+              const errorText = Object.values(backendMessage).flat().join(', ');
+              throw new Error(errorText || "Geçersiz istek. Lütfen bilgilerinizi kontrol edin.");
+            }
+            throw new Error(backendMessage);
+          }
+        }
+        
         // Re-throw other errors
         throw subError;
       }
 
-      // Try to create payment (optional - if payment API is not ready, just redirect)
-      try {
-        const { paymentApi } = await import("@/lib/payment-api");
-        const { PaymentProvider, Currency } = await import("@/types/payment");
-        
-        const price = billingPeriod === BillingPeriod.Monthly 
-          ? selectedPlan.monthlyPrice 
-          : selectedPlan.yearlyPrice;
+      // Show payment form instead of directly creating payment
+      const price = billingPeriod === BillingPeriod.Monthly 
+        ? selectedPlan.monthlyPrice 
+        : selectedPlan.yearlyPrice;
 
-        const payment = await paymentApi.createPayment({
-          subscriptionId: subscription.id,
-          amount: price,
-          currency: Currency.TRY,
-          provider: PaymentProvider.Iyzico,
-          description: `${selectedPlan.name} abonelik - ${billingPeriod === BillingPeriod.Monthly ? "Aylık" : "Yıllık"}`,
-        });
-
-        // If there's a redirect URL (3D Secure), redirect to it
-        if (payment.redirectUrl) {
-          window.location.href = payment.redirectUrl;
-          return;
-        }
-      } catch (paymentError: any) {
-        // If payment fails but subscription was created, still redirect to success page
-        console.warn("Payment creation failed, but subscription was created:", paymentError);
-        // Continue to success page
-      }
-
-      // Redirect to subscription page
-      router.push("/subscriptions/current?success=true");
+      setSelectedSubscription({
+        subscriptionId: subscription.id,
+        plan: selectedPlan,
+        price: price,
+      });
+      setShowPaymentForm(planId);
+      setSubscribing(null);
     } catch (err: any) {
       console.error("Subscribe error:", err);
       
       // Provide more specific error messages
       let errorMessage = "Abonelik oluşturulamadı";
       
-      if (err?.response?.status === 500) {
-        errorMessage = "Sunucu hatası oluştu. Lütfen daha sonra tekrar deneyin.";
-      } else if (err?.response?.status === 400) {
-        errorMessage = err?.response?.data?.message || "Geçersiz istek. Lütfen bilgilerinizi kontrol edin.";
-      } else if (err?.response?.status === 404) {
+      // Check for network errors
+      if (err?.message === "Sunucuya bağlanılamadı" || err?.code === "ECONNREFUSED") {
+        errorMessage = "Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.";
+      }
+      // Check for 500 errors
+      else if (err?.response?.status === 500 || err?.status === 500) {
+        const backendMessage = err?.response?.data?.message || 
+                               err?.response?.data?.errorMessage ||
+                               err?.response?.data?.error ||
+                               err?.message;
+        
+        if (backendMessage && !backendMessage.includes("Bir hata oluştu")) {
+          errorMessage = backendMessage;
+        } else {
+          errorMessage = "Sunucu hatası oluştu. Lütfen daha sonra tekrar deneyin veya destek ekibiyle iletişime geçin.";
+        }
+      }
+      // Check for 400 errors
+      else if (err?.response?.status === 400 || err?.status === 400) {
+        const backendMessage = err?.response?.data?.message || 
+                               err?.response?.data?.errors ||
+                               err?.message;
+        
+        if (typeof backendMessage === 'object') {
+          const errorText = Object.values(backendMessage).flat().join(', ');
+          errorMessage = errorText || "Geçersiz istek. Lütfen bilgilerinizi kontrol edin.";
+        } else {
+          errorMessage = backendMessage || "Geçersiz istek. Lütfen bilgilerinizi kontrol edin.";
+        }
+      }
+      // Check for 404 errors
+      else if (err?.response?.status === 404 || err?.status === 404) {
         errorMessage = "Plan bulunamadı veya aktif değil.";
-      } else if (err?.message) {
+      }
+      // Check for 409 (conflict) - already has active subscription
+      else if (err?.response?.status === 409 || err?.status === 409) {
+        errorMessage = err?.response?.data?.message || "Zaten aktif bir aboneliğiniz bulunmaktadır.";
+      }
+      // Use error message if available
+      else if (err?.message) {
         errorMessage = err.message;
       }
       
@@ -160,8 +260,52 @@ function SubscriptionsPageContent() {
     );
   }
 
+  async function handlePaymentSuccess() {
+    setShowPaymentForm(null);
+    setSelectedSubscription(null);
+    router.push("/subscriptions/current?success=true&payment=completed");
+  }
+
+  async function handlePaymentError(error: string) {
+    setError(error);
+    setShowPaymentForm(null);
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      {/* Payment Form Modal */}
+      {showPaymentForm && selectedSubscription && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 my-8">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Ödeme Bilgileri</h2>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-medium text-blue-900 mb-1">
+                  {selectedSubscription.plan.name} Planı
+                </p>
+                <p className="text-lg font-bold text-blue-900">
+                  {formatCurrency(selectedSubscription.price)} / {billingPeriod === BillingPeriod.Monthly ? "ay" : "yıl"}
+                </p>
+              </div>
+            </div>
+
+            <PaymentForm
+              subscriptionId={selectedSubscription.subscriptionId}
+              amount={selectedSubscription.price}
+              currency={0} // TRY
+              provider={1} // Iyzico
+              description={`${selectedSubscription.plan.name} abonelik - ${billingPeriod === BillingPeriod.Monthly ? "Aylık" : "Yıllık"}`}
+              onSuccess={handlePaymentSuccess}
+              onError={handlePaymentError}
+              onCancel={() => {
+                setShowPaymentForm(null);
+                setSelectedSubscription(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white rounded-lg shadow-sm p-8 border border-gray-200 text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Abonelik Planları</h1>
@@ -194,12 +338,25 @@ function SubscriptionsPageContent() {
       {/* Error Message */}
       {error && (
         <div className="bg-red-50 border-l-4 border-red-500 p-6 rounded-lg">
-          <div className="flex items-center">
-            <AlertCircle className="h-6 w-6 text-red-500 mr-3" />
-            <div>
-              <h3 className="text-lg font-medium text-red-900">Hata</h3>
-              <p className="text-red-700 mt-1">{error}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center flex-1">
+              <AlertCircle className="h-6 w-6 text-red-500 mr-3 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-lg font-medium text-red-900">Hata</h3>
+                <p className="text-red-700 mt-1">{error}</p>
+                {(error.includes("sunucu hatası") || error.includes("Sunucu hatası") || error.includes("500")) && (
+                  <p className="text-sm text-red-600 mt-2">
+                    Eğer sorun devam ederse, lütfen destek ekibiyle iletişime geçin.
+                  </p>
+                )}
+              </div>
             </div>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-500 hover:text-red-700 transition-colors ml-4 flex-shrink-0"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
         </div>
       )}
