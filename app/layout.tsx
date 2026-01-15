@@ -3,7 +3,6 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Navigation } from "@/components/navigation";
 import { AuthProvider } from "@/contexts/AuthContext";
-import { IyzicoScript } from "@/components/IyzicoScript";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -20,7 +19,6 @@ export default function RootLayout({
   return (
     <html lang="tr">
       <body className={inter.className}>
-        <IyzicoScript />
         <AuthProvider>
           <div className="min-h-screen bg-gray-50">
             <Navigation />

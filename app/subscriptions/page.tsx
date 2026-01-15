@@ -8,7 +8,6 @@ import { formatCurrency } from "@/lib/utils";
 import type { SubscriptionPlanDto } from "@/types/subscription";
 import { PlanType, BillingPeriod } from "@/types/subscription";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { PaymentForm } from "@/components/PaymentForm";
 
 function SubscriptionsPageContent() {
   const router = useRouter();
@@ -17,12 +16,6 @@ function SubscriptionsPageContent() {
   const [subscribing, setSubscribing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>(BillingPeriod.Monthly);
-  const [showPaymentForm, setShowPaymentForm] = useState<string | null>(null);
-  const [selectedSubscription, setSelectedSubscription] = useState<{
-    subscriptionId: string;
-    plan: SubscriptionPlanDto;
-    price: number;
-  } | null>(null);
 
   useEffect(() => {
     loadPlans();
@@ -147,18 +140,66 @@ function SubscriptionsPageContent() {
         throw subError;
       }
 
-      // Show payment form instead of directly creating payment
+      // Create payment directly - backend will generate checkout form URL
       const price = billingPeriod === BillingPeriod.Monthly 
         ? selectedPlan.monthlyPrice 
         : selectedPlan.yearlyPrice;
 
-      setSelectedSubscription({
-        subscriptionId: subscription.id,
-        plan: selectedPlan,
-        price: price,
-      });
-      setShowPaymentForm(planId);
-      setSubscribing(null);
+      try {
+        const { paymentApi } = await import("@/lib/payment-api");
+        
+        console.log("Creating payment for subscription:", subscription.id);
+        
+        // Use API route for callback to handle POST requests from iyzico
+        const paymentRequest = {
+          subscriptionId: subscription.id,
+          amount: price,
+          currency: 0, // TRY
+          provider: 1, // Iyzico
+          description: `${selectedPlan.name} abonelik - ${billingPeriod === BillingPeriod.Monthly ? "Aylık" : "Yıllık"}`,
+          callbackUrl: `${window.location.origin}/api/payment-callback`,
+          metadata: {
+            subscriptionId: subscription.id
+          }
+        };
+        
+        console.log("Payment request:", JSON.stringify(paymentRequest, null, 2));
+        
+        const payment = await paymentApi.createPayment(paymentRequest);
+
+        if (!payment.isSuccess) {
+          // Payment failed, delete the subscription
+          console.warn("Payment failed, cleaning up subscription");
+          await subscriptionsApi.cancel({ reason: "Ödeme başarısız" });
+          throw new Error(payment.errorMessage || "Ödeme işlemi başarısız oldu");
+        }
+
+        // Redirect to iyzico payment page
+        if (payment.redirectUrl) {
+          console.log("Redirecting to payment page:", payment.redirectUrl);
+          window.location.href = payment.redirectUrl;
+          return;
+        }
+
+        // If no redirect URL but payment is successful (shouldn't happen with checkout form)
+        if (payment.status === 2) { // PaymentStatus.Completed
+          router.push("/subscriptions/current?success=true&payment=completed");
+          return;
+        }
+
+        throw new Error("Ödeme sayfası URL'i alınamadı");
+      } catch (paymentError: any) {
+        console.error("Payment creation error:", paymentError);
+        // Clean up subscription if it was created
+        try {
+          await subscriptionsApi.cancel({ reason: "Ödeme oluşturulamadı" });
+        } catch (cleanupError) {
+          console.error("Cleanup error:", cleanupError);
+        }
+        throw paymentError;
+      } finally {
+        setSubscribing(null);
+      }
     } catch (err: any) {
       console.error("Subscribe error:", err);
       
@@ -260,52 +301,8 @@ function SubscriptionsPageContent() {
     );
   }
 
-  async function handlePaymentSuccess() {
-    setShowPaymentForm(null);
-    setSelectedSubscription(null);
-    router.push("/subscriptions/current?success=true&payment=completed");
-  }
-
-  async function handlePaymentError(error: string) {
-    setError(error);
-    setShowPaymentForm(null);
-  }
-
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Payment Form Modal */}
-      {showPaymentForm && selectedSubscription && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 my-8">
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Ödeme Bilgileri</h2>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm font-medium text-blue-900 mb-1">
-                  {selectedSubscription.plan.name} Planı
-                </p>
-                <p className="text-lg font-bold text-blue-900">
-                  {formatCurrency(selectedSubscription.price)} / {billingPeriod === BillingPeriod.Monthly ? "ay" : "yıl"}
-                </p>
-              </div>
-            </div>
-
-            <PaymentForm
-              subscriptionId={selectedSubscription.subscriptionId}
-              amount={selectedSubscription.price}
-              currency={0} // TRY
-              provider={1} // Iyzico
-              description={`${selectedSubscription.plan.name} abonelik - ${billingPeriod === BillingPeriod.Monthly ? "Aylık" : "Yıllık"}`}
-              onSuccess={handlePaymentSuccess}
-              onError={handlePaymentError}
-              onCancel={() => {
-                setShowPaymentForm(null);
-                setSelectedSubscription(null);
-              }}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="bg-white rounded-lg shadow-sm p-8 border border-gray-200 text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Abonelik Planları</h1>
