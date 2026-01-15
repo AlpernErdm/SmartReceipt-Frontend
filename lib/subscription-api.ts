@@ -51,5 +51,12 @@ export const subscriptionsApi = {
     const response = await apiClient.post('/Subscriptions/cancel', data || {});
     return response.data;
   },
-};
 
+  /**
+   * Aboneliği aktif eder (Trial'dan Active'e geçirir)
+   */
+  activate: async (subscriptionId: string): Promise<SubscriptionDto> => {
+    const response = await apiClient.post(`/Subscriptions/${subscriptionId}/activate`);
+    return response.data;
+  },
+};

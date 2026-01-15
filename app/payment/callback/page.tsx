@@ -54,8 +54,18 @@ function PaymentCallbackContent() {
         setStatus("success");
         setMessage("Ödeme başarıyla tamamlandı!");
 
-        // Reload subscription data
-        await subscriptionsApi.getCurrent().catch(() => {});
+        // Get current subscription and activate it (from Trial to Active)
+        try {
+          const currentSubscription = await subscriptionsApi.getCurrent();
+          if (currentSubscription && currentSubscription.id) {
+            console.log("Activating subscription:", currentSubscription.id);
+            await subscriptionsApi.activate(currentSubscription.id);
+            console.log("Subscription activated successfully!");
+          }
+        } catch (activateError) {
+          console.log("Could not activate subscription:", activateError);
+          // Don't fail the whole flow if activation fails
+        }
 
         // Redirect after 2 seconds
         setTimeout(() => {
